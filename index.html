@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Video Call</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: white;
+        }
+
+        .container {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 2rem;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+            max-width: 1200px;
+            width: 100%;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(45deg, #fff, #a8edea);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 1rem;
+            margin-bottom: 2rem;
+            flex-wrap: wrap;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
+        input[type="text"] {
+            padding: 0.75rem 1rem;
+            border: none;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            font-size: 1rem;
+            min-width: 200px;
+        }
+
+        input[type="text"]::placeholder {
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        button {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 10px;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 600;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .video-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .video-box {
+            position: relative;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 15px;
+            overflow: hidden;
+            aspect-ratio: 16/9;
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .video-label {
+            position: absolute;
+            top: 1rem;
+            left: 1rem;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            z-index: 10;
+        }
+
+        .status {
+            text-align: center;
+            padding: 1rem;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            margin-bottom: 1rem;
+        }
+
+        .status.connected {
+            background: rgba(76, 175, 80, 0.3);
+        }
+
+        .status.connecting {
+            background: rgba(255, 193, 7, 0.3);
+        }
+
+        .status.disconnected {
+            background: rgba(244, 67, 54, 0.3);
+        }
+
+        .call-controls {
+            display: flex;
+            justify-content: center;
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .call-btn {
+            background: linear-gradient(45deg, #4CAF50, #45a049);
+        }
+
+        .end-btn {
+            background: linear-gradient(45deg, #f44336, #d32f2f);
+        }
+
+        .mute-btn {
+            background: linear-gradient(45deg, #FF9800, #F57C00);
+        }
+
+        @media (max-width: 768px) {
+            .video-container {
+                grid-template-columns: 1fr;
+            }
+            
+            .controls {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📹 Simple Video Call</h1>
+            <p>Connect with anyone, anywhere</p>
+        </div>
+
+        <div class="controls">
+            <div class="control-group">
+                <input type="text" id="roomId" placeholder="Enter Room ID">
+                <button id="joinBtn">Join Room</button>
+            </div>
+            <div class="control-group">
+                <input type="text" id="createRoomName" placeholder="Create Room Name">
+                <button id="createBtn">Create Room</button>
+            </div>
+        </div>
+
+        <div class="status" id="status">
+            Ready to connect
+        </div>
+
+        <div class="video-container">
+            <div class="video-box">
+                <div class="video-label">You</div>
+                <video id="localVideo" autoplay muted></video>
+            </div>
+            <div class="video-box">
+                <div class="video-label">Remote User</div>
+                <video id="remoteVideo" autoplay></video>
+            </div>
+        </div>
+
+        <div class="call-controls">
+            <button id="muteBtn" class="mute-btn">🎤 Mute</button>
+            <button id="videoBtn" class="mute-btn">📹 Video</button>
+            <button id="endBtn" class="end-btn">📞 End Call</button>
+        </div>
+    </div>
+
+    <script>
+        class VideoCallApp {
+            constructor() {
+                this.localVideo = document.getElementById('localVideo');
+                this.remoteVideo = document.getElementById('remoteVideo');
+                this.status = document.getElementById('status');
+                this.roomId = null;
+                this.localStream = null;
+                this.remoteStream = null;
+                this.peerConnection = null;
+                this.isAudioMuted = false;
+                this.isVideoMuted = false;
+                
+                // ⭐ UPDATE THIS WITH YOUR GOOGLE APPS SCRIPT WEB APP URL
+                this.appsScriptUrl = 'https://script.google.com/macros/s/AKfycbx_b8_7EvlNsUn8LPMwWHsCTxUreHesS6KzccueNuOOhj-jjpz_775sbaXBqnq3gg20lw/exec';
+                
+                // WebRTC configuration
+                this.configuration = {
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:stun1.l.google.com:19302' }
+                    ]
+                };
+                
+                this.initializeEventListeners();
+                this.initializeLocalStream();
+            }
+
+            initializeEventListeners() {
+                document.getElementById('createBtn').addEventListener('click', () => this.createRoom());
+                document.getElementById('joinBtn').addEventListener('click', () => this.joinRoom());
+                document.getElementById('muteBtn').addEventListener('click', () => this.toggleAudio());
+                document.getElementById('videoBtn').addEventListener('click', () => this.toggleVideo());
+                document.getElementById('endBtn').addEventListener('click', () => this.endCall());
+            }
+
+            async initializeLocalStream() {
+                try {
+                    this.localStream = await navigator.mediaDevices.getUserMedia({
+                        video: { width: 640, height: 480 },
+                        audio: true
+                    });
+                    this.localVideo.srcObject = this.localStream;
+                    this.updateStatus('Camera and microphone ready', 'connected');
+                } catch (error) {
+                    console.error('Error accessing media devices:', error);
+                    this.updateStatus('Error accessing camera/microphone', 'disconnected');
+                }
+            }
+
+            async createRoom() {
+                const roomName = document.getElementById('createRoomName').value.trim();
+                if (!roomName) {
+                    alert('Please enter a room name');
+                    return;
+                }
+                
+                this.roomId = this.generateRoomId();
+                this.updateStatus('Creating room...', 'connecting');
+                
+                try {
+                    // Send request to Google Apps Script
+                    const response = await fetch(this.appsScriptUrl, {
+                        method: 'POST',
+                        mode: 'no-cors', // Important for Google Apps Script
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            action: 'create-room',
+                            roomId: this.roomId,
+                            roomName: roomName
+                        })
+                    });
+                    
+                    // Note: With no-cors mode, we can't read the response
+                    // So we'll assume success and handle errors through status updates
+                    this.updateStatus(`Room created: ${this.roomId}`, 'connected');
+                    this.setupPeerConnection();
+                    alert(`Room created! Share this ID: ${this.roomId}`);
+                } catch (error) {
+                    console.error('Error creating room:', error);
+                    this.updateStatus('Error creating room', 'disconnected');
+                    // Still setup peer connection for demo purposes
+                    this.setupPeerConnection();
+                    alert(`Room created (offline mode): ${this.roomId}`);
+                }
+            }
+
+            async joinRoom() {
+                const roomId = document.getElementById('roomId').value.trim();
+                if (!roomId) {
+                    alert('Please enter a room ID');
+                    return;
+                }
+                
+                this.roomId = roomId;
+                this.updateStatus('Joining room...', 'connecting');
+                
+                try {
+                    // Send request to Google Apps Script
+                    const response = await fetch(this.appsScriptUrl, {
+                        method: 'POST',
+                        mode: 'no-cors', // Important for Google Apps Script
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            action: 'join-room',
+                            roomId: this.roomId
+                        })
+                    });
+                    
+                    // Note: With no-cors mode, we can't read the response
+                    // So we'll assume success and setup the connection
+                    this.setupPeerConnection();
+                    this.createOffer();
+                } catch (error) {
+                    console.error('Error joining room:', error);
+                    this.updateStatus('Error joining room', 'disconnected');
+                    // Still setup peer connection for demo purposes
+                    this.setupPeerConnection();
+                    this.createOffer();
+                }
+            }
+
+            setupPeerConnection() {
+                this.peerConnection = new RTCPeerConnection(this.configuration);
+                
+                // Add local stream to peer connection
+                if (this.localStream) {
+                    this.localStream.getTracks().forEach(track => {
+                        this.peerConnection.addTrack(track, this.localStream);
+                    });
+                }
+                
+                // Handle remote stream
+                this.peerConnection.ontrack = (event) => {
+                    this.remoteStream = event.streams[0];
+                    this.remoteVideo.srcObject = this.remoteStream;
+                    this.updateStatus('Connected to remote user', 'connected');
+                };
+                
+                // Handle ICE candidates
+                this.peerConnection.onicecandidate = async (event) => {
+                    if (event.candidate) {
+                        try {
+                            // Send ICE candidate to Google Apps Script
+                            await fetch(this.appsScriptUrl, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                },
+                                body: JSON.stringify({
+                                    action: 'send-ice-candidate',
+                                    roomId: this.roomId,
+                                    candidate: event.candidate
+                                })
+                            });
+                        } catch (error) {
+                            console.error('Error sending ICE candidate:', error);
+                        }
+                    }
+                };
+                
+                // Handle connection state changes
+                this.peerConnection.onconnectionstatechange = () => {
+                    const state = this.peerConnection.connectionState;
+                    console.log('Connection state:', state);
+                    
+                    switch (state) {
+                        case 'connecting':
+                            this.updateStatus('Connecting...', 'connecting');
+                            break;
+                        case 'connected':
+                            this.updateStatus('Connected', 'connected');
+                            break;
+                        case 'disconnected':
+                            this.updateStatus('Disconnected', 'disconnected');
+                            break;
+                        case 'failed':
+                            this.updateStatus('Connection failed', 'disconnected');
+                            break;
+                    }
+                };
+            }
+
+            async createOffer() {
+                try {
+                    const offer = await this.peerConnection.createOffer();
+                    await this.peerConnection.setLocalDescription(offer);
+                    
+                    // Send offer to Google Apps Script
+                    const response = await fetch(this.appsScriptUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            action: 'send-offer',
+                            roomId: this.roomId,
+                            offer: offer
+                        })
+                    });
+                    
+                    const result = await response.json();
+                    console.log('Offer sent:', result);
+                    
+                    // Start polling for answer
+                    this.pollForAnswer();
+                } catch (error) {
+                    console.error('Error creating offer:', error);
+                }
+            }
+
+            // Poll for answer from the other peer
+            async pollForAnswer() {
+                try {
+                    const response = await fetch(this.appsScriptUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            action: 'get-answer',
+                            roomId: this.roomId
+                        })
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.answer) {
+                        await this.peerConnection.setRemoteDescription(result.answer);
+                        this.updateStatus('Connected', 'connected');
+                    } else {
+                        // Keep polling
+                        setTimeout(() => this.pollForAnswer(), 1000);
+                    }
+                } catch (error) {
+                    console.error('Error polling for answer:', error);
+                    setTimeout(() => this.pollForAnswer(), 2000);
+                }
+            }
+
+            // This simulates receiving an answer from the other peer
+            async simulateAnswer() {
+                try {
+                    // In a real implementation, this would come from Google Apps Script
+                    const answer = await this.peerConnection.createAnswer();
+                    await this.peerConnection.setLocalDescription(answer);
+                    
+                    // Simulate connection
+                    setTimeout(() => {
+                        this.simulateConnection();
+                    }, 1000);
+                } catch (error) {
+                    console.error('Error handling answer:', error);
+                }
+            }
+
+            simulateConnection() {
+                // This simulates a successful connection for demo purposes
+                this.updateStatus('Connected (Demo Mode)', 'connected');
+                
+                // Create a mock remote stream (mirror of local stream)
+                this.remoteVideo.srcObject = this.localStream;
+                this.remoteVideo.muted = true; // Prevent audio feedback
+            }
+
+            toggleAudio() {
+                if (this.localStream) {
+                    const audioTrack = this.localStream.getAudioTracks()[0];
+                    if (audioTrack) {
+                        audioTrack.enabled = !audioTrack.enabled;
+                        this.isAudioMuted = !audioTrack.enabled;
+                        
+                        const muteBtn = document.getElementById('muteBtn');
+                        muteBtn.textContent = this.isAudioMuted ? '🔇 Unmute' : '🎤 Mute';
+                    }
+                }
+            }
+
+            toggleVideo() {
+                if (this.localStream) {
+                    const videoTrack = this.localStream.getVideoTracks()[0];
+                    if (videoTrack) {
+                        videoTrack.enabled = !videoTrack.enabled;
+                        this.isVideoMuted = !videoTrack.enabled;
+                        
+                        const videoBtn = document.getElementById('videoBtn');
+                        videoBtn.textContent = this.isVideoMuted ? '📹 Video On' : '📹 Video Off';
+                    }
+                }
+            }
+
+            endCall() {
+                if (this.peerConnection) {
+                    this.peerConnection.close();
+                    this.peerConnection = null;
+                }
+                
+                if (this.remoteStream) {
+                    this.remoteStream.getTracks().forEach(track => track.stop());
+                    this.remoteVideo.srcObject = null;
+                }
+                
+                this.updateStatus('Call ended', 'disconnected');
+                this.roomId = null;
+            }
+
+            updateStatus(message, type = '') {
+                this.status.textContent = message;
+                this.status.className = `status ${type}`;
+            }
+
+            generateRoomId() {
+                return Math.random().toString(36).substr(2, 9).toUpperCase();
+            }
+        }
+
+        // Initialize the video call app
+        const videoCallApp = new VideoCallApp();
+    </script>
+</body>
+</html>
