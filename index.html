@@ -62,6 +62,7 @@
             overflow: hidden;
             border: 2px solid transparent;
             transition: all 0.3s ease;
+            min-height: 200px;
         }
 
         .video-wrapper.speaking {
@@ -216,6 +217,68 @@
             font-size: 0.9rem;
         }
 
+        .chat-panel {
+            position: fixed;
+            right: -300px;
+            top: 0;
+            width: 300px;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.9);
+            backdrop-filter: blur(10px);
+            transition: right 0.3s ease;
+            z-index: 999;
+        }
+
+        .chat-panel.open {
+            right: 0;
+        }
+
+        .chat-header {
+            padding: 1rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .chat-messages {
+            height: calc(100vh - 120px);
+            overflow-y: auto;
+            padding: 1rem;
+        }
+
+        .chat-input {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 1rem;
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .chat-input input {
+            flex: 1;
+            padding: 0.5rem;
+            border: none;
+            border-radius: 4px;
+        }
+
+        .message {
+            margin-bottom: 0.5rem;
+            padding: 0.5rem;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            color: white;
+            font-size: 0.9rem;
+        }
+
+        .message-sender {
+            font-weight: bold;
+            color: #4CAF50;
+        }
+
         @media (max-width: 768px) {
             .video-container {
                 grid-template-columns: 1fr;
@@ -228,7 +291,14 @@
             
             .control-btn {
                 flex: 1;
-                min-width: 120px;
+                min-width: 100px;
+                font-size: 0.9rem;
+                padding: 0.5rem;
+            }
+
+            .chat-panel {
+                width: 100%;
+                right: -100%;
             }
         }
     </style>
@@ -244,7 +314,7 @@
         </div>
     </div>
 
-    <div class="status" id="status">Connecting...</div>
+    <div class="status" id="status">Ready to connect</div>
 
     <div class="join-form" id="join-form">
         <h2>Join Video Conference</h2>
@@ -263,13 +333,16 @@
                 🎤 Mute
             </button>
             <button class="control-btn secondary" id="video-btn" onclick="toggleVideo()">
-                📹 Video Off
+                📹 Video
             </button>
             <button class="control-btn secondary" id="share-btn" onclick="toggleScreenShare()">
-                🖥️ Share Screen
+                🖥️ Share
+            </button>
+            <button class="control-btn secondary" onclick="toggleChat()">
+                💬 Chat
             </button>
             <button class="control-btn secondary" onclick="copyRoomLink()">
-                🔗 Copy Link
+                🔗 Link
             </button>
             <button class="control-btn danger" onclick="leaveRoom()">
                 📞 Leave
@@ -277,7 +350,25 @@
         </div>
     </div>
 
+    <div class="chat-panel" id="chat-panel">
+        <div class="chat-header">
+            <span>Chat</span>
+            <button onclick="toggleChat()" style="background: none; border: none; color: white; cursor: pointer;">✕</button>
+        </div>
+        <div class="chat-messages" id="chat-messages"></div>
+        <div class="chat-input">
+            <input type="text" id="chat-input" placeholder="Type a message..." onkeypress="if(event.key==='Enter') sendMessage()">
+            <button onclick="sendMessage()" style="padding: 0.5rem; background: #4CAF50; color: white; border: none; border-radius: 4px;">Send</button>
+        </div>
+    </div>
+
     <script>
+        // Configuration
+        const STUN_SERVERS = [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' }
+        ];
+
         // Global variables
         let localStream = null;
         let screenStream = null;
@@ -288,33 +379,92 @@
         let currentUser = '';
         let currentRoom = '';
         let currentSpeaker = null;
-        let audioContext = null;
-        let analyser = null;
+        let roomData = {};
 
-        // Simple signaling server simulation (in real deployment, use WebSocket server)
-        const signalingChannel = {
-            listeners: {},
-            send: function(event, data) {
-                // Simulate network delay
-                setTimeout(() => {
-                    // Broadcast to all listeners
-                    Object.values(this.listeners).forEach(listener => {
-                        if (listener.onmessage) {
-                            listener.onmessage({ data: JSON.stringify({ event, data }) });
+        // Simple P2P signaling using localStorage and storage events
+        class SimpleSignaling {
+            constructor() {
+                this.callbacks = {};
+                this.userId = this.generateId();
+                this.roomId = '';
+                
+                // Listen for storage events from other tabs/windows
+                window.addEventListener('storage', (e) => {
+                    if (e.key && e.key.startsWith('videocall_')) {
+                        const data = JSON.parse(e.newValue || '{}');
+                        if (data.to === this.userId || data.to === 'all') {
+                            this.handleMessage(data);
                         }
-                    });
-                }, 50);
-            },
-            connect: function(id) {
-                this.listeners[id] = {
-                    onmessage: null
-                };
-                return this.listeners[id];
-            },
-            disconnect: function(id) {
-                delete this.listeners[id];
+                    }
+                });
+
+                // Cleanup on page unload
+                window.addEventListener('beforeunload', () => {
+                    this.broadcast('user_left', { userId: this.userId, username: currentUser });
+                });
             }
-        };
+
+            generateId() {
+                return Math.random().toString(36).substr(2, 9);
+            }
+
+            join(roomId) {
+                this.roomId = roomId;
+                this.broadcast('user_joined', { userId: this.userId, username: currentUser });
+            }
+
+            broadcast(type, data) {
+                const message = {
+                    type,
+                    data,
+                    from: this.userId,
+                    to: 'all',
+                    room: this.roomId,
+                    timestamp: Date.now()
+                };
+                
+                const key = `videocall_${this.roomId}_${Date.now()}_${Math.random()}`;
+                localStorage.setItem(key, JSON.stringify(message));
+                
+                // Clean up old messages
+                setTimeout(() => {
+                    localStorage.removeItem(key);
+                }, 5000);
+            }
+
+            send(to, type, data) {
+                const message = {
+                    type,
+                    data,
+                    from: this.userId,
+                    to,
+                    room: this.roomId,
+                    timestamp: Date.now()
+                };
+                
+                const key = `videocall_${this.roomId}_${Date.now()}_${Math.random()}`;
+                localStorage.setItem(key, JSON.stringify(message));
+                
+                setTimeout(() => {
+                    localStorage.removeItem(key);
+                }, 5000);
+            }
+
+            handleMessage(message) {
+                if (message.room !== this.roomId) return;
+                if (message.from === this.userId) return;
+                
+                if (this.callbacks[message.type]) {
+                    this.callbacks[message.type](message.data, message.from);
+                }
+            }
+
+            on(event, callback) {
+                this.callbacks[event] = callback;
+            }
+        }
+
+        const signaling = new SimpleSignaling();
 
         // Initialize the application
         async function init() {
@@ -326,6 +476,120 @@
             if (roomId) {
                 document.getElementById('room-input').value = roomId;
             }
+
+            setupSignaling();
+        }
+
+        function setupSignaling() {
+            signaling.on('user_joined', async (data, from) => {
+                console.log('User joined:', data);
+                updateStatus(`${data.username} joined the room`);
+                
+                // Create peer connection for new user
+                if (!peers[from]) {
+                    await createPeerConnection(from, data.username, true);
+                }
+                
+                updateParticipantCount();
+                setTimeout(() => updateStatus('Connected'), 2000);
+            });
+
+            signaling.on('user_left', (data, from) => {
+                console.log('User left:', data);
+                updateStatus(`${data.username} left the room`);
+                
+                // Remove peer connection
+                if (peers[from]) {
+                    peers[from].close();
+                    delete peers[from];
+                }
+                
+                // Remove video element
+                const videoWrapper = document.querySelector(`[data-peer-id="${from}"]`);
+                if (videoWrapper) {
+                    videoWrapper.remove();
+                }
+                
+                updateParticipantCount();
+                setTimeout(() => updateStatus('Connected'), 2000);
+            });
+
+            signaling.on('offer', async (data, from) => {
+                console.log('Received offer from:', from);
+                if (!peers[from]) {
+                    await createPeerConnection(from, data.username, false);
+                }
+                
+                await peers[from].setRemoteDescription(data.offer);
+                const answer = await peers[from].createAnswer();
+                await peers[from].setLocalDescription(answer);
+                
+                signaling.send(from, 'answer', { answer, username: currentUser });
+            });
+
+            signaling.on('answer', async (data, from) => {
+                console.log('Received answer from:', from);
+                if (peers[from]) {
+                    await peers[from].setRemoteDescription(data.answer);
+                }
+            });
+
+            signaling.on('ice_candidate', async (data, from) => {
+                console.log('Received ICE candidate from:', from);
+                if (peers[from]) {
+                    await peers[from].addIceCandidate(data.candidate);
+                }
+            });
+
+            signaling.on('chat_message', (data, from) => {
+                addChatMessage(data.username, data.message);
+            });
+        }
+
+        async function createPeerConnection(peerId, username, isInitiator) {
+            console.log('Creating peer connection for:', peerId, username);
+            
+            const pc = new RTCPeerConnection({ iceServers: STUN_SERVERS });
+            peers[peerId] = pc;
+
+            // Add local stream
+            if (localStream) {
+                localStream.getTracks().forEach(track => {
+                    pc.addTrack(track, localStream);
+                });
+            }
+
+            // Handle remote stream
+            pc.ontrack = (event) => {
+                console.log('Received remote stream from:', peerId);
+                const remoteStream = event.streams[0];
+                addVideoStream(remoteStream, username, false, peerId);
+            };
+
+            // Handle ICE candidates
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    signaling.send(peerId, 'ice_candidate', { candidate: event.candidate });
+                }
+            };
+
+            // Handle connection state changes
+            pc.onconnectionstatechange = () => {
+                console.log('Connection state:', pc.connectionState);
+                if (pc.connectionState === 'connected') {
+                    updateStatus('Connected to ' + username);
+                    setTimeout(() => updateStatus('Connected'), 2000);
+                }
+            };
+
+            // Create offer if initiator
+            if (isInitiator) {
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                signaling.send(peerId, 'offer', { offer, username: currentUser });
+            }
+
+            return pc;
         }
 
         // Join room function
@@ -347,19 +611,20 @@
                     video: { width: 1280, height: 720 },
                     audio: true
                 });
-
-                setupAudioAnalyzer();
                 
                 document.getElementById('join-form').classList.add('hidden');
                 document.getElementById('main-container').classList.remove('hidden');
                 document.getElementById('room-id').textContent = `Room: ${currentRoom}`;
                 
-                addVideoStream(localStream, currentUser, true);
+                addVideoStream(localStream, currentUser + ' (You)', true, 'local');
                 
                 // Update URL with room ID
                 window.history.pushState({}, '', `?room=${currentRoom}`);
                 
-                updateStatus('Connected');
+                // Join signaling room
+                signaling.join(currentRoom);
+                
+                updateStatus('Waiting for others to join...');
                 updateParticipantCount();
                 
             } catch (error) {
@@ -369,57 +634,24 @@
             }
         }
 
-        // Setup audio analyzer for voice activity detection
-        function setupAudioAnalyzer() {
-            if (!localStream) return;
-            
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            analyser = audioContext.createAnalyser();
-            const source = audioContext.createMediaStreamSource(localStream);
-            source.connect(analyser);
-            
-            analyser.fftSize = 256;
-            const bufferLength = analyser.frequencyBinCount;
-            const dataArray = new Uint8Array(bufferLength);
-            
-            function detectVoiceActivity() {
-                analyser.getByteFrequencyData(dataArray);
-                
-                let sum = 0;
-                for (let i = 0; i < bufferLength; i++) {
-                    sum += dataArray[i];
-                }
-                const average = sum / bufferLength;
-                
-                // Detect speaking (threshold can be adjusted)
-                const isSpeaking = average > 20 && !isAudioMuted;
-                
-                const localVideo = document.querySelector('.video-wrapper[data-user="' + currentUser + '"]');
-                if (localVideo) {
-                    const indicator = localVideo.querySelector('.audio-indicator');
-                    if (isSpeaking) {
-                        localVideo.classList.add('speaking');
-                        indicator.classList.add('speaking');
-                        setMainSpeaker(currentUser);
-                    } else {
-                        localVideo.classList.remove('speaking');
-                        indicator.classList.remove('speaking');
-                    }
-                }
-                
-                requestAnimationFrame(detectVoiceActivity);
-            }
-            
-            detectVoiceActivity();
-        }
-
         // Add video stream to the interface
-        function addVideoStream(stream, username, isLocal = false) {
+        function addVideoStream(stream, username, isLocal = false, peerId = null) {
             const videoContainer = document.getElementById('video-container');
+            
+            // Remove existing video for this peer
+            if (peerId) {
+                const existing = document.querySelector(`[data-peer-id="${peerId}"]`);
+                if (existing) {
+                    existing.remove();
+                }
+            }
             
             const videoWrapper = document.createElement('div');
             videoWrapper.className = 'video-wrapper';
             videoWrapper.setAttribute('data-user', username);
+            if (peerId) {
+                videoWrapper.setAttribute('data-peer-id', peerId);
+            }
             
             const video = document.createElement('video');
             video.srcObject = stream;
@@ -432,7 +664,7 @@
             const overlay = document.createElement('div');
             overlay.className = 'video-overlay';
             overlay.innerHTML = `
-                <div class="participant-name">${username}${isLocal ? ' (You)' : ''}</div>
+                <div class="participant-name">${username}</div>
                 <div class="audio-indicator"></div>
             `;
             
@@ -454,28 +686,18 @@
 
         // Set main speaker (fullscreen)
         function setMainSpeaker(username) {
-            // Remove previous fullscreen
             const previousMain = document.querySelector('.video-wrapper.fullscreen');
             if (previousMain) {
                 previousMain.classList.remove('fullscreen');
             }
             
-            // Set new main speaker
             const newMain = document.querySelector('.video-wrapper[data-user="' + username + '"]');
             if (newMain && currentSpeaker !== username) {
                 newMain.classList.add('fullscreen');
                 currentSpeaker = username;
-                
-                // Auto-exit fullscreen after 10 seconds if no activity
-                setTimeout(() => {
-                    if (currentSpeaker === username) {
-                        exitFullscreen();
-                    }
-                }, 10000);
             }
         }
 
-        // Exit fullscreen
         function exitFullscreen() {
             const fullscreenVideo = document.querySelector('.video-wrapper.fullscreen');
             if (fullscreenVideo) {
@@ -523,50 +745,89 @@
                         audio: true
                     });
                     
-                    // Replace video track
+                    // Replace video track for all peers
                     const videoTrack = screenStream.getVideoTracks()[0];
-                    const sender = Object.values(peers).find(peer => 
-                        peer.getSenders().find(s => s.track && s.track.kind === 'video')
-                    );
+                    Object.values(peers).forEach(async (pc) => {
+                        const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+                        if (sender) {
+                            await sender.replaceTrack(videoTrack);
+                        }
+                    });
                     
-                    // Add screen share video
-                    addVideoStream(screenStream, currentUser + ' (Screen)', false);
+                    // Update local video
+                    const localVideo = document.querySelector('[data-peer-id="local"] video');
+                    if (localVideo) {
+                        localVideo.srcObject = screenStream;
+                    }
                     
                     videoTrack.onended = () => {
                         stopScreenShare();
                     };
                     
                     isScreenSharing = true;
-                    document.getElementById('share-btn').textContent = '🛑 Stop Share';
+                    document.getElementById('share-btn').textContent = '🛑 Stop';
                     document.getElementById('share-btn').classList.add('danger');
                     
                 } catch (error) {
                     console.error('Error sharing screen:', error);
-                    alert('Could not share screen. Please try again.');
                 }
             } else {
                 stopScreenShare();
             }
         }
 
-        // Stop screen share
         function stopScreenShare() {
             if (screenStream) {
                 screenStream.getTracks().forEach(track => track.stop());
                 screenStream = null;
             }
             
-            // Remove screen share video
-            const screenVideo = document.querySelector('.video-wrapper[data-user="' + currentUser + ' (Screen)"]');
-            if (screenVideo) {
-                screenVideo.remove();
+            // Switch back to camera
+            if (localStream) {
+                const videoTrack = localStream.getVideoTracks()[0];
+                Object.values(peers).forEach(async (pc) => {
+                    const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+                    if (sender) {
+                        await sender.replaceTrack(videoTrack);
+                    }
+                });
+                
+                const localVideo = document.querySelector('[data-peer-id="local"] video');
+                if (localVideo) {
+                    localVideo.srcObject = localStream;
+                }
             }
             
             isScreenSharing = false;
-            document.getElementById('share-btn').textContent = '🖥️ Share Screen';
+            document.getElementById('share-btn').textContent = '🖥️ Share';
             document.getElementById('share-btn').classList.remove('danger');
-            
-            updateParticipantCount();
+        }
+
+        // Chat functions
+        function toggleChat() {
+            document.getElementById('chat-panel').classList.toggle('open');
+        }
+
+        function sendMessage() {
+            const input = document.getElementById('chat-input');
+            const message = input.value.trim();
+            if (message) {
+                signaling.broadcast('chat_message', { username: currentUser, message });
+                addChatMessage(currentUser + ' (You)', message);
+                input.value = '';
+            }
+        }
+
+        function addChatMessage(username, message) {
+            const chatMessages = document.getElementById('chat-messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message';
+            messageDiv.innerHTML = `
+                <div class="message-sender">${username}</div>
+                <div>${message}</div>
+            `;
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
         }
 
         // Copy room link
@@ -576,7 +837,6 @@
                 updateStatus('Room link copied to clipboard!');
                 setTimeout(() => updateStatus('Connected'), 2000);
             }).catch(() => {
-                // Fallback for older browsers
                 const textArea = document.createElement('textarea');
                 textArea.value = link;
                 document.body.appendChild(textArea);
@@ -590,6 +850,8 @@
 
         // Leave room
         function leaveRoom() {
+            signaling.broadcast('user_left', { userId: signaling.userId, username: currentUser });
+            
             if (localStream) {
                 localStream.getTracks().forEach(track => track.stop());
             }
@@ -597,22 +859,15 @@
                 screenStream.getTracks().forEach(track => track.stop());
             }
             
-            // Clean up
             Object.values(peers).forEach(peer => peer.close());
             peers = {};
             
-            if (audioContext) {
-                audioContext.close();
-            }
-            
-            // Reset UI
             document.getElementById('main-container').classList.add('hidden');
             document.getElementById('join-form').classList.remove('hidden');
             document.getElementById('video-container').innerHTML = '';
             document.getElementById('username').value = '';
             document.getElementById('room-input').value = '';
             
-            // Reset URL
             window.history.pushState({}, '', window.location.pathname);
             
             updateStatus('Disconnected');
@@ -623,7 +878,7 @@
 
         // Utility functions
         function generateRoomId() {
-            return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+            return Math.random().toString(36).substring(2, 15);
         }
 
         function updateStatus(message) {
